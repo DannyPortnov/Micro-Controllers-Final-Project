@@ -1,0 +1,227 @@
+C51 COMPILER V9.60.0.0   DISP                                                              05/02/2022 15:42:42 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE DISP
+OBJECT MODULE PLACED IN .\lib\bsp\efm8_memory_lcd\src\disp.OBJ
+COMPILER INVOKED BY: C:\SimplicityStudio\developer\toolchains\keil_8051\9.60\BIN\C51.exe C:\SimplicityStudio\developer\s
+                    -dks\8051\v4.2.3\kits\common\drivers\efm8_memory_lcd\src\disp.c OMF2 SMALL DEBUG OBJECTEXTEND ROM(LARGE) WARNINGLEVEL(2) 
+                    -FLOATFUZZY(3) OPTIMIZE(8,SPEED) INTVECTOR(0X0000) INTPROMOTE INCDIR(C:\Users\danih\OneDrive - ort braude college of engi
+                    -neering\Desktop\מיקרו בקרים\v5_workspace\Middle Project\inc;C:\Users\danih\OneDrive - ort braude college of engineering\
+                    -Desktop\מיקרו בקרים\v5_workspace\Middle Project\inc\config;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/common/d
+                    -rivers/efm8_memory_lcd/inc;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/common/drivers/efm8_memory_lcd/inc/graph
+                    -ics;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/common/drivers/efm8_memory_lcd/inc/config;C:/SimplicityStudio/d
+                    -eveloper/sdks/8051/v4.2.3//kits/common/bsp;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/EFM8UB2_SLSTK2001A/confi
+                    -g;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//Device/shared/si8051Base;C:/SimplicityStudio/developer/sdks/8051/v4.2.
+                    -3//Device/EFM8UB2/inc;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/common/drivers/efm8_joystick;C:/SimplicityStu
+                    -dio/developer/sdks/8051/v4.2.3//kits/common/drivers/efm8_rgb_led;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//Device/
+                    -EFM8UB2/peripheral_driver/inc) PRINT(.\lib\bsp\efm8_memory_lcd\src\disp.lst) COND PAGEWIDTH(120) PAGELENGTH(65) OBJECT(.
+                    -\lib\bsp\efm8_memory_lcd\src\disp.OBJ)
+
+line level    source
+
+   1          /////////////////////////////////////////////////////////////////////////////
+   2          // disp.c
+   3          /////////////////////////////////////////////////////////////////////////////
+   4          
+   5          #include "bsp.h"
+   6          #include "utils.h"
+   7          #include "spi.h"
+   8          #include "tick.h"
+   9          #include "disp.h"
+  10          #include <string.h>
+  11          
+  12          ////////////////////////////////////////////////////////////////////////
+  13          // Display driver for Sharp LS013B7DH03 128x128 monochrome memory LCD //
+  14          ////////////////////////////////////////////////////////////////////////
+  15          
+  16          /////////////////////////////////////////////////////////////////////////////
+  17          // Globals
+  18          /////////////////////////////////////////////////////////////////////////////
+  19          
+  20          uint16_t LastVcomToggle = 0;
+  21          uint16_t test = 0; //all variables must be pre-defined HERE
+  22          
+  23          /////////////////////////////////////////////////////////////////////////////
+  24          // Static Function Prototypes
+  25          /////////////////////////////////////////////////////////////////////////////
+  26          
+  27          uint8_t BitReverse(uint8_t input);
+  28          uint8_t SoftwareVcomToggle(uint8_t cmd);
+  29          uint16_t Wait2(uint16_t ms); //Any function MENTIONED anywhere in the code that returns something
+  30          // must have a function prototype, meaning a 'signature' above the file/
+  31          
+  32          /////////////////////////////////////////////////////////////////////////////
+  33          // Function
+  34          /////////////////////////////////////////////////////////////////////////////
+  35          
+  36          /***************************************************************************//**
+  37           * @brief Reverse the bit-endianess in a byte (bit 0 => bit 7, bit 1 => bit 6, etc)
+  38           *
+  39           * @param input A byte to reverse
+  40           * @return The reversed byte
+  41           *
+  42           *****************************************************************************/
+  43          uint8_t BitReverse(uint8_t input)
+  44          {
+C51 COMPILER V9.60.0.0   DISP                                                              05/02/2022 15:42:42 PAGE 2   
+
+  45   1          uint8_t output = input;
+  46   1      
+  47   1          output = (output & 0xF0) >> 4 | (output & 0x0F) << 4;
+  48   1          output = (output & 0xCC) >> 2 | (output & 0x33) << 2;
+  49   1          output = (output & 0xAA) >> 1 | (output & 0x55) << 1;
+  50   1      
+  51   1          return output;
+  52   1      }
+  53          
+  54          /***************************************************************************//**
+  55           * @brief Toggle the software VCOM command bit at 5 Hz
+  56           * @param cmd The display SPI command byte
+  57           * @return The display SPI command byte with M1 toggled at 5 Hz
+  58           *
+  59           *****************************************************************************/
+  60          uint8_t SoftwareVcomToggle(uint8_t cmd)
+  61          {
+  62   1          uint16_t tick = GetTickCount();
+  63   1      
+  64   1          if (tick - LastVcomToggle > HZ_TO_MS(DISP_VCOM_TOGGLE_RATE_HZ))
+  65   1          {
+  66   2              // Pulse software VCOM
+  67   2              cmd |= DISP_CMD_VCOM_MASK;
+  68   2      
+  69   2              LastVcomToggle = tick;
+  70   2          }
+  71   1      
+  72   1          return cmd;
+  73   1      }
+  74          
+  75          /***************************************************************************//**
+  76           * @brief Initializes the display driver and clears the display
+  77           *
+  78           *****************************************************************************/
+  79          //Danny: replacing wait with wait2
+  80          void DISP_Init()
+  81          {
+  82   1          BSP_DISP_CS = SPI_CS_DEASSERT_LVL;
+  83   1          BSP_DISP_EN = DISP_EN_EFM8;
+  84   1      
+  85   1          //test = Wait2(10);
+  86   1          Wait(10);
+  87   1          DISP_ClearAll();
+  88   1      }
+  89          //Danny: 3420 (10 ms),6842 (20ms)
+  90          
+  91          /***************************************************************************//**
+  92           * @brief Clear the display to the background color
+  93           *
+  94           *****************************************************************************/
+  95          void DISP_ClearAll()
+  96          {
+  97   1      #if DISP_BACKGROUND_COLOR == COLOR_WHITE
+                  uint8_t tx[2];
+              
+                  tx[0] = SoftwareVcomToggle(DISP_CMD_CLEAR_ALL);
+                  tx[1] = DISP_CMD_DUMMY;
+              
+                  SPI_StartTransfer(tx, sizeof(tx));
+              #else
+ 105   1          uint8_t i;
+ 106   1      
+ 107   1          for (i = 0; i < DISP_HEIGHT; i++)
+C51 COMPILER V9.60.0.0   DISP                                                              05/02/2022 15:42:42 PAGE 3   
+
+ 108   1          {
+ 109   2              DISP_ClearLine(i, COLOR_BLACK);
+ 110   2          }
+ 111   1      #endif
+ 112   1      }
+ 113          
+ 114          /***************************************************************************//**
+ 115           * @brief Clear a single line
+ 116           *
+ 117           * @param row line to write (0 = top line; 127 = bottom line)
+ 118           * @param bw line color after clearing (0x00 = black; 0xFF = white)
+ 119           *
+ 120           *****************************************************************************/
+ 121          void DISP_ClearLine(uint8_t row, uint8_t bw)
+ 122          {
+ 123   1          uint8_t i;
+ 124   1          uint8_t cmd[DISP_BUF_SIZE + 4];
+ 125   1      
+ 126   1          if (bw)
+ 127   1          {
+ 128   2              bw = COLOR_WHITE;
+ 129   2          }
+ 130   1          else
+ 131   1          {
+ 132   2              bw = COLOR_BLACK;
+ 133   2          }
+ 134   1      
+ 135   1          // Send write command and line address
+ 136   1          cmd[0] = SoftwareVcomToggle(DISP_CMD_DYNAMIC_MODE);
+ 137   1          cmd[1] = BitReverse(row+1);
+ 138   1      
+ 139   1          // Send line data
+ 140   1          for (i = 0; i < DISP_BUF_SIZE; i++)
+ 141   1          {
+ 142   2            cmd[2 + i] = bw;
+ 143   2          }
+ 144   1      
+ 145   1          // Send dummy data
+ 146   1          cmd[DISP_BUF_SIZE + 2] = DISP_CMD_DUMMY;
+ 147   1          cmd[DISP_BUF_SIZE + 3] = DISP_CMD_DUMMY;
+ 148   1      
+ 149   1          // Send command
+ 150   1          SPI_StartTransfer(cmd, DISP_BUF_SIZE + 4);
+ 151   1      }
+ 152          
+ 153          /***************************************************************************//**
+ 154           * @brief Write a single line to the display
+ 155           *
+ 156           * @param row line to write (0 = top line; 127 = bottom line)
+ 157           * @param line pixel values
+ 158           *             (line[0] MSB = left-most pixel; line[15] LSB = right-most pixel)
+ 159           *             (set bit to '0' to turn pixel "on" (black))
+ 160           *
+ 161           *****************************************************************************/
+ 162          void DISP_WriteLine(uint8_t row, SI_SEGMENT_VARIABLE(line[DISP_BUF_SIZE], uint8_t, SI_SEG_GENERIC))
+ 163          {
+ 164   1          uint8_t i;
+ 165   1          uint8_t cmd[DISP_BUF_SIZE + 4];
+ 166   1      
+ 167   1          // Send write command and line address
+ 168   1          cmd[0] = SoftwareVcomToggle(DISP_CMD_DYNAMIC_MODE);
+ 169   1          cmd[1] = BitReverse(row+1);
+ 170   1      
+C51 COMPILER V9.60.0.0   DISP                                                              05/02/2022 15:42:42 PAGE 4   
+
+ 171   1          for (i = 0; i < DISP_BUF_SIZE; i++)
+ 172   1          {
+ 173   2            cmd[i+2] = line[i];
+ 174   2          }
+ 175   1      
+ 176   1          // Send dummy data
+ 177   1          cmd[DISP_BUF_SIZE + 2] = DISP_CMD_DUMMY;
+ 178   1          cmd[DISP_BUF_SIZE + 3] = DISP_CMD_DUMMY;
+ 179   1      
+ 180   1          // Send command
+ 181   1          SPI_StartTransfer(cmd, DISP_BUF_SIZE + 4);
+ 182   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    260    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      4      48
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,276 @@
+C51 COMPILER V9.60.0.0   MIDDLE_PROJECT_MAIN                                               05/02/2022 16:01:05 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MIDDLE_PROJECT_MAIN
+OBJECT MODULE PLACED IN .\src\Middle Project_main.OBJ
+COMPILER INVOKED BY: C:\SimplicityStudio\developer\toolchains\keil_8051\9.60\BIN\C51.exe C:\Users\danih\OneDrive - ort b
+                    -raude college of engineering\Desktop\מיקרו בקרים\v5_workspace\Middle Project\src\Middle Project_main.c OMF2 SMALL DEBUG 
+                    -OBJECTEXTEND ROM(LARGE) WARNINGLEVEL(2) FLOATFUZZY(3) OPTIMIZE(8,SPEED) INTVECTOR(0X0000) INTPROMOTE INCDIR(C:\Users\dan
+                    -ih\OneDrive - ort braude college of engineering\Desktop\מיקרו בקרים\v5_workspace\Middle Project\inc;C:\Users\danih\OneDr
+                    -ive - ort braude college of engineering\Desktop\מיקרו בקרים\v5_workspace\Middle Project\inc\config;C:/SimplicityStudio/d
+                    -eveloper/sdks/8051/v4.2.3//kits/common/drivers/efm8_memory_lcd/inc;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/
+                    -common/drivers/efm8_memory_lcd/inc/graphics;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/common/drivers/efm8_mem
+                    -ory_lcd/inc/config;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/common/bsp;C:/SimplicityStudio/developer/sdks/80
+                    -51/v4.2.3//kits/EFM8UB2_SLSTK2001A/config;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//Device/shared/si8051Base;C:/Si
+                    -mplicityStudio/developer/sdks/8051/v4.2.3//Device/EFM8UB2/inc;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/commo
+                    -n/drivers/efm8_joystick;C:/SimplicityStudio/developer/sdks/8051/v4.2.3//kits/common/drivers/efm8_rgb_led;C:/SimplicitySt
+                    -udio/developer/sdks/8051/v4.2.3//Device/EFM8UB2/peripheral_driver/inc) PRINT(.\src\Middle Project_main.lst) COND PAGEWID
+                    -TH(120) PAGELENGTH(65) OBJECT(.\src\Middle Project_main.OBJ)
+
+line level    source
+
+   1          //-----------------------------------------------------------------------------
+   2          // Middle Project
+   3          //----------------------------------------------------------------------------
+   4          //  Copyright (C) ORT BRAUDE COLLEGE
+   5          //  Electronics & Electrical Engineering Department
+   6          //  All rights reserved.
+   7          //  Owner   :  Danny Portnov, Niv Kopolovich, Lior Pasikov
+   8          //  FILE NAME    :  Middle Project_main.c
+   9          //  DATE         :  08 MAY 2022
+  10          //  TARGET MCU   :  EFM8UB20F64G-A-QFP48,  EFM8UB2 SLSTK2001A
+  11          //  DESCRIPTION  :  A Temperature measurement system, which measures temperature in two analog channels,
+  12          //  and displays the measurement on the LCD screen.
+  13          //  The system produces an alert if there is a noticeable difference between the two measurements.
+  14          //  Besides the microcontroller itself, we're using an external LM35 temperature gauge,
+  15          //  Bluetooth transmitter and a buzzer.
+  16          //
+  17          //-----------------------------------------------------------------------------
+  18          //-----------------------------------------------------------------------------
+  19          // Resources UPDATE
+  20          //-----------------------------------------------------------------------------
+  21          // SYSCLK - 48MHz HFOSC / 8
+  22          // SPI0   - 1MHz
+  23          // Timer0 - 2Hz (500ms count)
+  24          // Timer1 - 440Hz (Buzzer)
+  25          // Timer2 - 500kHz (SPI CS delay)
+  26          // Timer3 - 1KHz (1ms tick)
+  27          // P0.1 - CS (Active High)
+  28          // P0.2 - PB0
+  29          // P0.3 - PB1
+  30          // P0.6 - SCK
+  31          // P1.0 - MOSI
+  32          // P1.4 - Display enable
+  33          // P1.6 - Green led
+  34          // P1.7 - TX
+  35          // P2.0 - Red LED
+  36          // P2.1 - RX
+  37          // P2.6 - LM35
+  38          // P3.7 - Buzzer
+  39          //
+  40          //-----------------------------------------------------------------------------
+  41          // Includes and Variables
+  42          //-----------------------------------------------------------------------------
+  43          #include "bsp.h"
+  44          #include "InitDevice.h"
+C51 COMPILER V9.60.0.0   MIDDLE_PROJECT_MAIN                                               05/02/2022 16:01:05 PAGE 2   
+
+  45          #include "disp.h"
+  46          #include "tick.h"
+  47          #include "render.h"
+  48          #define LCD_height 128
+  49          #define Diff 15 //Maximum difference allowed between temperatures
+  50          SI_SEGMENT_VARIABLE(line[DISP_BUF_SIZE], uint8_t, RENDER_LINE_SEG); //line array definition
+  51          int runProgram=0;//Flag which enables (or stops) the program
+  52          uint32_t extTemp;
+  53          uint32_t intTemp; //Internal and external temperatures measured, 32 bit because ADC0 is 32 bit also
+  54          char s[3]; //Empty string to store temperature
+  55          sbit adcINT=ADC0CN0^5; //ADINT, ADC's interrupt flag, set by hardware upon completion of a conversion
+  56          sbit ADBZ=ADC0CN0^4; //ADBUSY bit, writing 1 to this bit initiates an ADC conversion
+  57          sbit buzz=P3^7; //Buzzer pin
+  58          sbit TF0=TCON^5; //overflow flag timer 0
+  59          sbit TF1=TCON^7;//overflow flag timer 1
+  60          sbit greenLed=P1^6; // set green led
+  61          sbit redLed=P2^0; // set red led
+  62          sbit PB1=P0^3; // PB1
+  63          sbit PB0=P0^2; //PB0
+  64          int alarm=0; //Flag for activating (or stopping) an alarm.
+  65          //-----------------------------------------------------------------------------
+  66          // SiLabs_Startup() Routine
+  67          // ----------------------------------------------------------------------------
+  68          // This function is called immediately after reset, before the initialization
+  69          // code is run in SILABS_STARTUP.A51 (which runs before main() )
+  70          //-----------------------------------------------------------------------------
+  71          void SiLabs_Startup (void) {}
+  72          
+  73          // ----------------------------------------------------------------------------
+  74          // Converts the output from the ADC to the currect temperature in Celsius units,
+  75          // if the temperature was measured from the external gauge (LM35).
+  76          // Parameters: Hexadecimal value
+  77          // Return value: The temperature measured in Celsius units as an integer.
+  78          // ----------------------------------------------------------------------------
+  79          int ExternalTempConv(float adc_hex) //
+  80          {
+  81   1        float v_in = (adc_hex / 1023) * 1.2;
+  82   1        int temp = v_in / 0.01;
+  83   1        return temp;
+  84   1      }
+  85          // ----------------------------------------------------------------------------
+  86          // Converts the output from the ADC to the currect temperature in Celsius units.
+  87          // if the temperature was measured from the internal gauge.
+  88          // Parameters: Hexadecimal value
+  89          // Return value: The temperature measured in Celsius units as an integer.
+  90          // ----------------------------------------------------------------------------
+  91          int InternalTempConv(float adc_hex) {
+  92   1        float v_in = (adc_hex / 1023) * 1.2;
+  93   1        int temp = (v_in-0.764) / 0.00287;
+  94   1        return temp;
+  95   1      }
+  96          // ----------------------------------------------------------------------------
+  97          // Converts a number in an integer data type, representing a temperature, to a string data type.
+  98          // This conversation is necessary in order to print the temperature on the LCD screen.
+  99          // Parameters: A number as an integer, and an empty string with size of 3.
+ 100          // Return value: String size of 3 which contains the number above.
+ 101          // ----------------------------------------------------------------------------
+ 102          char* intToString(int temp, char *str) { //
+ 103   1        str[2] = '\0';
+ 104   1        str[1] = temp % 10 + '0';
+ 105   1        str[0] = (temp / 10) % 10 +'0';
+ 106   1        return str;
+ 107   1      }
+C51 COMPILER V9.60.0.0   MIDDLE_PROJECT_MAIN                                               05/02/2022 16:01:05 PAGE 3   
+
+ 108          
+ 109          // ----------------------------------------------------------------------------
+ 110          // Prints on the screen a number and text, in the given position on the LCD screen.
+ 111          // It's used for printing the temperatures, their difference and the signature by a different function.
+ 112          // Parameters: A number, string, and the position of the line printed on the screen.
+ 113          // Return value: None.
+ 114          // ----------------------------------------------------------------------------
+ 115          void print(int temp,char* text,int ypos) {
+ 116   1        int y;
+ 117   1        for (y=0; y< FONT_HEIGHT; y++) {
+ 118   2              RENDER_StrLine(line, 3, y, text);
+ 119   2              if (temp!=-1)
+ 120   2                RENDER_StrLine(line, 110, y, intToString(temp, s));
+ 121   2              DISP_WriteLine(ypos+y, line); //1st line
+ 122   2         }
+ 123   1      }
+ 124          // ----------------------------------------------------------------------------
+ 125          // Calculates the absolute value of the difference between the temperatures
+ 126          // Parameters: Two integers
+ 127          // Return value: Absolute value of the difference.
+ 128          // ----------------------------------------------------------------------------
+ 129          int abs(int a, int b) {
+ 130   1        if (a>b)
+ 131   1          return a-b;
+ 132   1        return b-a;
+ 133   1      }
+ 134          // ----------------------------------------------------------------------------
+ 135          // Prints the temperatures measured by both the internal and external temperature sensors,
+ 136          // their difference a a signature.
+ 137          // Parameters: Two integers (our temperature).
+ 138          // Return value: Null
+ 139          // ----------------------------------------------------------------------------
+ 140          void printTempsAndDiff(int extTemp,int intTemp) {
+ 141   1        print(-1,"ORT BRAUDE COLLEGE", 4); //-1 cause not temperature is printed
+ 142   1        print(-1,"Danny, Niv and Lior", 14); //-1 cause not temperature is printed
+ 143   1        print(extTemp,"External temp is ", 24);//14 means 2nd line
+ 144   1        print(intTemp,"Internal temp is ", 34); //3rd line
+ 145   1        print(abs(intTemp,extTemp),"Difference is ", 44); //4th line
+ 146   1      }
+ 147          
+ 148          // ----------------------------------------------------------------------------
+ 149          // Configurates ADC's positive input and return the measured temperature in Celsius
+ 150          // Parameters: AMX0P value (Configuration for the positive input)
+ 151          // Return value: Temperature in Celsius
+ 152          // ----------------------------------------------------------------------------
+ 153          uint32_t measureTemprature(int input) {
+ 154   1        AMX0P=input; //Set ADC's positive input
+ 155   1        ADBZ=1; //initiate convertion
+ 156   1        while (adcINT!=1);//wait here if not done converting
+ 157   1        adcINT=0; //reset interrupt
+ 158   1        return ADC0;
+ 159   1      }
+ 160          
+ 161          // ----------------------------------------------------------------------------
+ 162          // Sends the letter 'S' via bluetooth to the smartphone app
+ 163          // Parameters: None
+ 164          // Return value: None
+ 165          // ----------------------------------------------------------------------------
+ 166          void sendSignal() {
+ 167   1        SBUF1 = 'S';//send once every 500ms
+ 168   1      }
+ 169          // ----------------------------------------------------------------------------
+ 170          // Manages the programs's logic. If button0 is pressed, start the program, and
+C51 COMPILER V9.60.0.0   MIDDLE_PROJECT_MAIN                                               05/02/2022 16:01:05 PAGE 4   
+
+ 171          // if button 1 is presses, than stop.
+ 172          // Parameters: 2 Integers (our buttons).
+ 173          // Return value: None
+ 174          // ----------------------------------------------------------------------------
+ 175          void controlLogic(int button0, int button1) {
+ 176   1        if (button0==0)
+ 177   1            runProgram=1;
+ 178   1        if (button1==0)
+ 179   1            runProgram=0;
+ 180   1      }
+ 181          
+ 182          
+ 183          int main(void)
+ 184          {
+ 185   1        enter_DefaultMode_from_RESET();  // Enter default mode
+ 186   1        DISP_ClearAll();
+ 187   1        DISP_Init();
+ 188   1        //~~~{.c}
+ 189   1        while(1) {
+ 190   2            controlLogic(PB0, PB1); //the regular variables aren't 'detected' in the if
+ 191   2            if (runProgram) { //if PB0 is pressed, enter (active low)
+ 192   3                greenLed=0; //leds are active low
+ 193   3                while (runProgram) { //while PB1 is not pressed, perform program
+ 194   4                    //if PB1 is pressed, the while ends and we'll through the main
+ 195   4                    intTemp=InternalTempConv(measureTemprature(0x1e));
+ 196   4                    extTemp=ExternalTempConv(measureTemprature(0x05));
+ 197   4                    //Do the actions only after measuring both temps
+ 198   4                    if (TF0==1) { //500ms
+ 199   5                        //extTemp=15+ioSwitch%10; //for testing purposes
+ 200   5                        printTempsAndDiff(extTemp, intTemp);
+ 201   5                        if (abs(intTemp,extTemp)>=Diff) { //first 500ms have passed, and there's a difference
+ 202   6                          alarm=1;
+ 203   6                          sendSignal();
+ 204   6                        }
+ 205   5                        if (abs(intTemp,extTemp)<Diff) //first 500ms have passed, not difference
+ 206   5                          alarm=0;
+ 207   5                        TF0=0;
+ 208   5                    }
+ 209   4                    if (alarm) {
+ 210   5                        if (TF1==1)//timer 0: 440hz
+ 211   5                          buzz=~buzz; //do buzzer
+ 212   5                        greenLed=1; //turning off the green led cause its the same led
+ 213   5                        redLed=0;
+ 214   5                        TF1=0;
+ 215   5                    }
+ 216   4                    else {
+ 217   5                        redLed=1;
+ 218   5                        greenLed=0;
+ 219   5                        buzz=0;
+ 220   5                    }
+ 221   4                    controlLogic(PB0, PB1); //update program status
+ 222   4                }
+ 223   3                redLed=1;
+ 224   3                greenLed=1;
+ 225   3                buzz=0;
+ 226   3                DISP_ClearAll();
+ 227   3            }
+ 228   2          }
+ 229   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    672    ----
+C51 COMPILER V9.60.0.0   MIDDLE_PROJECT_MAIN                                               05/02/2022 16:01:05 PAGE 5   
+
+   CONSTANT SIZE    =     90    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     15      22
+   IDATA SIZE       =     16    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
